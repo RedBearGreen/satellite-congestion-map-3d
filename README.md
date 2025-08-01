@@ -1,2 +1,5 @@
 # satellite-congestion-map-3d
-Satellite Congestion Map 3D Portfolio
+This is a 3D satellite tracking app created for my portfolio.
+- Tracks satellites and debris using NORAD CAT IDs.
+- Deployed on Vercel: [Live Demo](https://your-app.vercel.app)
+- Built with HTML, CSS, JavaScript, and CesiumJS.
