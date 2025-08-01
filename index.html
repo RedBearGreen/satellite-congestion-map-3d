@@ -57,8 +57,21 @@
         <button onclick="document.getElementById('customPopup').style.display = 'none';">OK</button>
     </div>
     <script>
-        // Cesium Ion Access Tokenを環境変数から取得
-        Cesium.Ion.defaultAccessToken = process.env.CESIUM_ACCESS_TOKEN || '';
+        // Cesiumトークンをサーバーから取得
+        let cesiumToken = '';
+        fetch('/api/cesium-token')
+            .then(response => response.text())
+            .then(token => {
+                if (token) {
+                    Cesium.Ion.defaultAccessToken = token;
+                } else {
+                    console.error('Cesium access token not found');
+                }
+            })
+            .catch(error => console.error('Error fetching Cesium token:', error));
+
+        // satellitesをグローバルスコープで初期化
+        let satellites = [];
 
         const viewer = new Cesium.Viewer('cesiumContainer', {
             baseLayer: Cesium.ImageryLayer.fromProviderAsync(Cesium.TileMapServiceImageryProvider.fromUrl(Cesium.buildModuleUrl('Assets/Textures/NaturalEarthII'))),
@@ -83,8 +96,6 @@
             Cesium.CameraEventType.WHEEL
         ];
         viewer.scene.screenSpaceCameraController.enableZoom = true;
-
-        let satellites = [];
 
         const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
         handler.setInputAction(function(movement) {

@@ -13,21 +13,30 @@ app.use((req, res, next) => {
     next();
 });
 
-// 環境変数からSpace-Track認証情報を取得
+// 環境変数から認証情報を取得
 const spaceTrackUsername = process.env.SPACE_TRACK_USERNAME || '';
 const spaceTrackPassword = process.env.SPACE_TRACK_PASSWORD || '';
+const cesiumAccessToken = process.env.CESIUM_ACCESS_TOKEN || '';
 
 const cookieJar = new tough.CookieJar();
 
-// TLEデータを取得するエンドポイント (NORAD IDをクエリで受け取る)
+// Cesiumトークンを返すAPI
+app.get('/api/cesium-token', (req, res) => {
+    if (cesiumAccessToken) {
+        res.send(cesiumAccessToken);
+    } else {
+        res.status(500).json({ error: 'Cesium access token not set' });
+    }
+});
+
+// TLEデータを取得するエンドポイント
 app.get('/api/tle', async (req, res) => {
     const noradId = req.query.norad || '25544'; // デフォルトISS
     try {
         if (!spaceTrackUsername || !spaceTrackPassword) {
             throw new Error('Space-Track credentials are not set in environment variables');
         }
-        console.log('Attempting to login to Space-Track'); // ユーザー名は非表示
-        // Space-Trackにログイン (クッキーを使用)
+        console.log('Attempting to login to Space-Track');
         const loginResponse = await axios.post('https://www.space-track.org/ajaxauth/login', {
             identity: spaceTrackUsername,
             password: spaceTrackPassword
@@ -48,7 +57,6 @@ app.get('/api/tle', async (req, res) => {
         console.log('Login response headers:', JSON.stringify(loginResponse.headers, null, 2));
         console.log('Saved cookies:', cookieJar.getCookies('https://www.space-track.org'));
 
-        // クッキーを使ってAPIリクエスト
         const tleResponse = await axios.get(`https://www.space-track.org/basicspacedata/query/class/tle_latest/NORAD_CAT_ID/${noradId}/orderby/EPOCH%20desc/limit/1/format/json`, {
             headers: {
                 'Accept': 'application/json',
@@ -63,7 +71,6 @@ app.get('/api/tle', async (req, res) => {
             throw new Error('No TLE data received from Space-Track');
         }
 
-        // TLEデータを抽出
         const tleData = tleResponse.data[0];
         const tleLines = [tleData.TLE_LINE1, tleData.TLE_LINE2].filter(line => line && line.trim());
         if (tleLines.length < 2) {
