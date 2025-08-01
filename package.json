@@ -1,0 +1,8 @@
+{
+  "name": "satellite-congestion-map-3d",
+  "version": "1.0.0",
+  "dependencies": {
+    "axios-cookiejar-support": "^1.0.1",
+    "tough-cookie": "^4.1.3"
+  }
+}
