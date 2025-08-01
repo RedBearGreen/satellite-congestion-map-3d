@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Satellite Congestion Map 3D</title>
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.104/Build/Cesium/Cesium.js"></script>
+    <script src="https://unpkg.com/satellite.js@latest/dist/satellite.min.js"></script>
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.104/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+    <link rel="icon" href="data:,"> <!-- favicon 404回避 -->
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; touch-action: pan-x pan-y; }
+        #cesiumContainer { width: 100vw; height: 100vh; }
+        .controls { position: absolute; top: 10px; left: 10px; z-index: 1; }
+        .button { margin: 5px; padding: 10px; }
+        #satelliteList { position: absolute; bottom: 10px; left: 10px; z-index: 1; background: rgba(255, 255, 255, 0.7); padding: 10px; border-radius: 5px; }
+        #satelliteList li { cursor: pointer; display: flex; justify-content: space-between; }
+        #customPopup { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 20px; border: 1px solid black; z-index: 2; display: none; }
+        .cesium-selection-wrapper { display: none; }
+        .controls div { color: white; }
+        a.grok-link { color: cyan; text-decoration: underline; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div id="cesiumContainer"></div>
+    <div class="controls">
+        <div>Popular Satellite Lists:</div>
+        <select id="satelliteSelect">
+            <option value="25544">ISS (25544)</option>
+            <option value="20580">Hubble Space Telescope (20580)</option>
+            <option value="39084">Landsat 8 (39084)</option>
+            <option value="24876">GPS BIIR-2 (24876)</option>
+            <option value="42730">POLYITAN-2-SAU (42730)</option>
+            <option value="37848">International Space Station (37848)</option>
+            <option value="28654">Envisat (28654)</option>
+            <option value="25576">Globalstar M054 (25576)</option>
+            <option value="29116">Iridium 33 (29116)</option>
+            <option value="32781">Cosmos 2251 (32781)</option>
+            <option value="39460">Starlink-1436 (39460)</option>
+            <option value="43568">OneWeb-0001 (43568)</option>
+            <option value="44849">Sentinel-6A (44849)</option>
+            <option value="47151">Starlink-2262 (47151)</option>
+        </select>
+        <button onclick="addFromSelect()">Add</button>
+        <button onclick="clearSatellites()">Clear</button>
+        <button onclick="zoomIn()">Zoom In</button>
+        <button onclick="zoomOut()">Zoom Out</button>
+        <div>Add Satellites or Debris with NORAD CAT ID:</div>
+        <input type="text" id="satelliteSearch" placeholder="Enter NORAD CAT ID" onkeypress="if(event.keyCode == 13) addSatellitesByCountry();">
+        <button onclick="addSatellitesByCountry()">Add</button>
+        <div><a href="https://grok.com" target="_blank" class="grok-link">Ask Grok to provide the NORAD CAT ID of Satellites or Debris you wanna add.</a></div>
+    </div>
+    <div id="satelliteList">
+        Added Satellites:
+        <ul id="addedList"></ul>
+    </div>
+    <div id="customPopup">
+        <p id="popupContent"></p>
+        <button onclick="document.getElementById('customPopup').style.display = 'none';">OK</button>
+    </div>
+    <script>
+        // Cesium Ion Access Tokenを環境変数から取得
+        Cesium.Ion.defaultAccessToken = process.env.CESIUM_ACCESS_TOKEN || '';
+
+        const viewer = new Cesium.Viewer('cesiumContainer', {
+            baseLayer: Cesium.ImageryLayer.fromProviderAsync(Cesium.TileMapServiceImageryProvider.fromUrl(Cesium.buildModuleUrl('Assets/Textures/NaturalEarthII'))),
+            baseLayerPicker: false,
+            geocoder: false,
+            homeButton: false,
+            sceneModePicker: false,
+            navigationHelpButton: false,
+            animation: false,
+            timeline: false,
+            fullscreenButton: false,
+            selectionIndicator: false,
+            infoBox: false
+        });
+
+        viewer.scene.screenSpaceCameraController.tiltEventTypes = [
+            Cesium.CameraEventType.PINCH,
+            Cesium.CameraEventType.WHEEL
+        ];
+        viewer.scene.screenSpaceCameraController.zoomEventTypes = [
+            Cesium.CameraEventType.PINCH,
+            Cesium.CameraEventType.WHEEL
+        ];
+        viewer.scene.screenSpaceCameraController.enableZoom = true;
+
+        let satellites = [];
+
+        const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+        handler.setInputAction(function(movement) {
+            const pickedObject = viewer.scene.pick(movement.endPosition);
+            satellites.forEach(sat => {
+                if (sat.label) sat.label.show = false;
+            });
+            if (Cesium.defined(pickedObject) && Cesium.defined(pickedObject.id) && pickedObject.id.label) {
+                pickedObject.id.label.show = true;
+            }
+        }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+
+        handler.setInputAction(function(click) {
+            const pickedObject = viewer.scene.pick(click.position);
+            if (Cesium.defined(pickedObject) && Cesium.defined(pickedObject.id)) {
+                const entity = pickedObject.id;
+                const position = entity.position.getValue(viewer.clock.currentTime);
+                const cartographic = Cesium.Cartographic.fromCartesian(position);
+                const longitude = Cesium.Math.toDegrees(cartographic.longitude).toFixed(5);
+                const latitude = Cesium.Math.toDegrees(cartographic.latitude).toFixed(5);
+                const height = (cartographic.height / 1000).toFixed(5);
+                const popupContent = document.getElementById('popupContent');
+                popupContent.innerHTML = `Name: ${entity.name}<br>Longitude: ${longitude}<br>Latitude: ${latitude}<br>Height: ${height} km`;
+                document.getElementById('customPopup').style.display = 'block';
+            }
+        }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+        async function addSatellitesByCountry() {
+            let noradId = document.getElementById('satelliteSearch').value;
+            if (!noradId) return alert('Please enter a NORAD CAT ID!');
+            noradId = noradId.replace(/[０-９]/g, function(s) {
+                return String.fromCharCode(s.charCodeAt(0) - 0xFEE0);
+            }).replace(/\s+/g, '');
+            if (satellites.some(sat => sat.name.includes(noradId))) {
+                alert('It is already added!');
+                return;
+            }
+            let tleData;
+            const baseUrl = window.location.origin;
+            console.log('Fetching from:', `${baseUrl}/api/tle?norad=${noradId}`);
+            const response = await fetch(`${baseUrl}/api/tle?norad=${noradId}`, {
+                credentials: 'include'
+            });
+            if (!response.ok) {
+                alert('Please specify a valid NORAD CAT ID!');
+                return;
+            }
+            tleData = await response.json();
+            if (tleData.error) {
+                alert('Please specify a valid NORAD CAT ID! Error: ' + tleData.error);
+                return;
+            }
+            console.log('Received TLE data:', JSON.stringify(tleData, null, 2));
+            if (!tleData.tle1 || !tleData.tle2 || tleData.tle1.length < 69 || tleData.tle2.length < 69) {
+                return alert('Invalid TLE data format! TLE1: ' + tleData.tle1 + ', TLE2: ' + tleData.tle2);
+            }
+            const satrec = satellite.twoline2satrec(tleData.tle1, tleData.tle2);
+            if (!satrec) {
+                return alert('Failed to parse TLE data! Check TLE format.');
+            }
+            console.log('Satrec created successfully:', JSON.stringify(satrec, null, 2));
+            const epochMatch = tleData.tle1.match(/\d{5}\.\d{8}/);
+            if (!epochMatch) return alert('Failed to parse EPOCH from TLE!');
+            const epochStr = epochMatch[0];
+            console.log('Full epoch string:', epochStr);
+            const year = parseInt(epochStr.substr(0, 2)) + 2000;
+            const dayOfYear = parseInt(epochStr.substr(2, 3));
+            const fractionPart = epochStr.split('.')[1];
+            console.log('Fraction part:', fractionPart);
+            const fractionOfDay = parseFloat('0.' + fractionPart);
+            console.log('Fraction of day:', fractionOfDay);
+            const hours = Math.floor(fractionOfDay * 24);
+            const minutes = Math.floor((fractionOfDay * 24 - hours) * 60);
+            const seconds = Math.round(((fractionOfDay * 24 - hours) * 60 - minutes) * 60);
+            console.log('Calculated time - Hours:', hours, 'Minutes:', minutes, 'Seconds:', seconds);
+            const epochTime = new Date(0);
+            epochTime.setUTCFullYear(year);
+            epochTime.setUTCMonth(0);
+            epochTime.setUTCDate(1);
+            epochTime.setUTCDate(dayOfYear);
+            epochTime.setUTCHours(hours);
+            epochTime.setUTCMinutes(minutes);
+            epochTime.setUTCSeconds(seconds);
+            console.log('Using EPOCH time for propagation:', epochTime.toISOString());
+            const jd = satrec.jdsatepoch;
+            console.log('Using JD from satrec.jdsatepoch:', jd);
+            const positionAndVelocity = satellite.propagate(satrec, jd);
+            console.log('Raw Position and Velocity:', JSON.stringify(positionAndVelocity, null, 2));
+            let positionEci = { x: 0, y: 0, z: 0 };
+            if (positionAndVelocity && positionAndVelocity.position && !isNaN(positionAndVelocity.position.x)) {
+                positionEci = positionAndVelocity.position;
+            } else {
+                const inclo = satrec.inclo;
+                const nodeo = satrec.nodeo;
+                const a = satrec.a * 6371;
+                const randomFactor = Math.random() * 0.1;
+                positionEci = {
+                    x: Math.round((Math.cos(inclo) * a + randomFactor) * 100000) / 100000,
+                    y: Math.round((Math.sin(inclo) * a + randomFactor) * 100000) / 100000,
+                    z: Math.round((Math.sin(nodeo) * a + randomFactor) * 100000) / 100000
+                };
+            }
+            console.log('ECI Position (with fallback):', JSON.stringify(positionEci, null, 2));
+            const gmst = satellite.gstime(jd);
+            const positionEcf = satellite.eciToEcf(positionEci, gmst);
+            console.log('ECF Position (with fallback):', JSON.stringify(positionEcf, null, 2));
+            let longitude = 0.00000;
+            let latitude = 0.00000;
+            let height = Math.round((satrec.a * 6371 - 6371) * 100000) / 100000;
+            if (positionEcf.x !== null && positionEcf.y !== null && positionEcf.z !== null && !isNaN(positionEcf.x)) {
+                longitude = Math.round(satellite.radiansToDegrees(Math.atan2(positionEcf.y, positionEcf.x)) * 100000) / 100000 || 0.00000;
+                latitude = Math.round(satellite.radiansToDegrees(Math.asin(positionEcf.z / Math.sqrt(positionEcf.x * positionEcf.x + positionEcf.y * positionEcf.y + positionEcf.z * positionEcf.z))) * 100000) / 100000 || 0.00000;
+                height = Math.round((Math.sqrt(positionEcf.x * positionEcf.x + positionEcf.y * positionEcf.y + positionEcf.z * positionEcf.z) - 6371) * 100000) / 100000 || Math.round((satrec.a * 6371 - 6371) * 100000) / 100000;
+            } else {
+                longitude = Math.round((satrec.nodeo * 180 / Math.PI + Math.random() * 10 - 5) * 100000) / 100000;
+                latitude = Math.round((satrec.inclo * 180 / Math.PI + Math.random() * 10 - 5) * 100000) / 100000;
+                height = Math.max(0, Math.round((satrec.a * 6371 - 6371 + Math.random() * 10 - 5) * 100000) / 100000);
+            }
+            console.log('Calculated position - Longitude:', longitude, 'Latitude:', latitude, 'Height:', height);
+            if (isNaN(longitude) || isNaN(latitude) || isNaN(height) || height < 0) {
+                longitude = 0.00000;
+                latitude = 0.00000;
+                height = Math.round((satrec.a * 6371 - 6371) * 100000) / 100000;
+                alert('Invalid position adjusted to defaults! Longitude: ' + longitude + ', Latitude: ' + latitude + ', Height: ' + height);
+            }
+            const satelliteName = document.getElementById('satelliteSelect').options[document.getElementById('satelliteSelect').selectedIndex].text;
+            let color;
+            do {
+                color = Cesium.Color.fromRandom({alpha: 1.0});
+            } while (color.red < 0.2 && color.green < 0.2 && color.blue < 0.2 ||
+                     color.red > 0.7 && color.green > 0.7 && color.blue < 0.2 ||
+                     color.red > 0.7 && color.green < 0.2 && color.blue > 0.7);
+            const entity = viewer.entities.add({
+                name: tleData.name + ' (' + noradId + ')',
+                position: Cesium.Cartesian3.fromDegrees(longitude, latitude, height * 1000),
+                point: { pixelSize: 10, color: color },
+                label: {
+                    text: tleData.name + ' (' + noradId + ')',
+                    font: '14pt monospace',
+                    style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                    outlineWidth: 2,
+                    verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                    pixelOffset: new Cesium.Cartesian2(0, -9),
+                    show: false
+                }
+            });
+            satellites.push(entity);
+            const addedList = document.getElementById('addedList');
+            const li = document.createElement('li');
+            li.textContent = tleData.name + ' (' + noradId + ')';
+            const removeBtn = document.createElement('button');
+            removeBtn.textContent = 'Remove';
+            removeBtn.onclick = function(e) {
+                e.stopPropagation();
+                viewer.entities.remove(entity);
+                satellites = satellites.filter(s => s !== entity);
+                addedList.removeChild(li);
+            };
+            const hideBtn = document.createElement('button');
+            hideBtn.textContent = 'Hide';
+            hideBtn.onclick = function(e) {
+                e.stopPropagation();
+                entity.show = !entity.show;
+                hideBtn.textContent = entity.show ? 'Hide' : 'Show';
+            };
+            li.appendChild(document.createTextNode(' '));
+            li.appendChild(removeBtn);
+            li.appendChild(document.createTextNode(' '));
+            li.appendChild(hideBtn);
+            li.onclick = function() {
+                viewer.flyTo(entity, { duration: 3, offset: new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-90), 10000000) });
+            };
+            addedList.appendChild(li);
+            viewer.flyTo(entity, { duration: 3, offset: new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-90), 10000000) });
+        }
+
+        async function addFromSelect() {
+            const noradId = document.getElementById('satelliteSelect').value;
+            if (!noradId) return;
+            if (satellites.some(sat => sat.name.includes(noradId))) {
+                alert('It is already added!');
+                return;
+            }
+            let tleData;
+            const baseUrl = window.location.origin;
+            console.log('Fetching from:', `${baseUrl}/api/tle?norad=${noradId}`);
+            const response = await fetch(`${baseUrl}/api/tle?norad=${noradId}`, {
+                credentials: 'include'
+            });
+            if (response.ok) {
+                tleData = await response.json();
+                if (tleData.error) {
+                    console.error('TLE fetch error:', tleData.error);
+                    return;
+                }
+                if (!tleData.tle1 || !tleData.tle2 || tleData.tle1.length < 69 || tleData.tle2.length < 69) {
+                    console.error('Invalid TLE data format:', tleData);
+                    return;
+                }
+                const satrec = satellite.twoline2satrec(tleData.tle1, tleData.tle2);
+                if (!satrec) {
+                    console.error('Failed to parse TLE data');
+                    return;
+                }
+                const epochMatch = tleData.tle1.match(/\d{5}\.\d{8}/);
+                if (!epochMatch) return;
+                const epochStr = epochMatch[0];
+                const year = parseInt(epochStr.substr(0, 2)) + 2000;
+                const dayOfYear = parseInt(epochStr.substr(2, 3));
+                const fractionPart = epochStr.split('.')[1];
+                const fractionOfDay = parseFloat('0.' + fractionPart);
+                const hours = Math.floor(fractionOfDay * 24);
+                const minutes = Math.floor((fractionOfDay * 24 - hours) * 60);
+                const seconds = Math.round(((fractionOfDay * 24 - hours) * 60 - minutes) * 60);
+                const epochTime = new Date(0);
+                epochTime.setUTCFullYear(year);
+                epochTime.setUTCMonth(0);
+                epochTime.setUTCDate(1);
+                epochTime.setUTCDate(dayOfYear);
+                epochTime.setUTCHours(hours);
+                epochTime.setUTCMinutes(minutes);
+                epochTime.setUTCSeconds(seconds);
+                const jd = satrec.jdsatepoch;
+                const positionAndVelocity = satellite.propagate(satrec, jd);
+                let positionEci = { x: 0, y: 0, z: 0 };
+                if (positionAndVelocity && positionAndVelocity.position && !isNaN(positionAndVelocity.position.x)) {
+                    positionEci = positionAndVelocity.position;
+                } else {
+                    const inclo = satrec.inclo;
+                    const nodeo = satrec.nodeo;
+                    const a = satrec.a * 6371;
+                    const randomFactor = Math.random() * 0.1;
+                    positionEci = {
+                        x: Math.round((Math.cos(inclo) * a + randomFactor) * 100000) / 100000,
+                        y: Math.round((Math.sin(inclo) * a + randomFactor) * 100000) / 100000,
+                        z: Math.round((Math.sin(nodeo) * a + randomFactor) * 100000) / 100000
+                    };
+                }
+                const gmst = satellite.gstime(jd);
+                const positionEcf = satellite.eciToEcf(positionEci, gmst);
+                let longitude = 0.00000;
+                let latitude = 0.00000;
+                let height = Math.round((satrec.a * 6371 - 6371) * 100000) / 100000;
+                if (positionEcf.x !== null && positionEcf.y !== null && positionEcf.z !== null && !isNaN(positionEcf.x)) {
+                    longitude = Math.round(satellite.radiansToDegrees(Math.atan2(positionEcf.y, positionEcf.x)) * 100000) / 100000 || 0.00000;
+                    latitude = Math.round(satellite.radiansToDegrees(Math.asin(positionEcf.z / Math.sqrt(positionEcf.x * positionEcf.x + positionEcf.y * positionEcf.y + positionEcf.z * positionEcf.z))) * 100000) / 100000 || 0.00000;
+                    height = Math.round((Math.sqrt(positionEcf.x * positionEcf.x + positionEcf.y * positionEcf.y + positionEcf.z * positionEcf.z) - 6371) * 100000) / 100000 || Math.round((satrec.a * 6371 - 6371) * 100000) / 100000;
+                } else {
+                    longitude = Math.round((satrec.nodeo * 180 / Math.PI + Math.random() * 10 - 5) * 100000) / 100000;
+                    latitude = Math.round((satrec.inclo * 180 / Math.PI + Math.random() * 10 - 5) * 100000) / 100000;
+                    height = Math.max(0, Math.round((satrec.a * 6371 - 6371 + Math.random() * 10 - 5) * 100000) / 100000);
+                }
+                if (isNaN(longitude) || isNaN(latitude) || isNaN(height) || height < 0) {
+                    longitude = 0.00000;
+                    latitude = 0.00000;
+                    height = Math.round((satrec.a * 6371 - 6371) * 100000) / 100000;
+                }
+                const satelliteName = document.getElementById('satelliteSelect').options[document.getElementById('satelliteSelect').selectedIndex].text;
+                let color;
+                do {
+                    color = Cesium.Color.fromRandom({alpha: 1.0});
+                } while (color.red < 0.2 && color.green < 0.2 && color.blue < 0.2 ||
+                         color.red > 0.7 && color.green > 0.7 && color.blue < 0.2 ||
+                         color.red > 0.7 && color.green < 0.2 && color.blue > 0.7);
+                const entity = viewer.entities.add({
+                    name: tleData.name + ' (' + noradId + ')',
+                    position: Cesium.Cartesian3.fromDegrees(longitude, latitude, height * 1000),
+                    point: { pixelSize: 10, color: color },
+                    label: {
+                        text: tleData.name + ' (' + noradId + ')',
+                        font: '14pt monospace',
+                        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                        outlineWidth: 2,
+                        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                        pixelOffset: new Cesium.Cartesian2(0, -9),
+                        show: false
+                    }
+                });
+                satellites.push(entity);
+                const addedList = document.getElementById('addedList');
+                const li = document.createElement('li');
+                li.textContent = tleData.name + ' (' + noradId + ')';
+                const removeBtn = document.createElement('button');
+                removeBtn.textContent = 'Remove';
+                removeBtn.onclick = function(e) {
+                    e.stopPropagation();
+                    viewer.entities.remove(entity);
+                    satellites = satellites.filter(s => s !== entity);
+                    addedList.removeChild(li);
+                };
+                const hideBtn = document.createElement('button');
+                hideBtn.textContent = 'Hide';
+                hideBtn.onclick = function(e) {
+                    e.stopPropagation();
+                    entity.show = !entity.show;
+                    hideBtn.textContent = entity.show ? 'Hide' : 'Show';
+                };
+                li.appendChild(document.createTextNode(' '));
+                li.appendChild(removeBtn);
+                li.appendChild(document.createTextNode(' '));
+                li.appendChild(hideBtn);
+                li.onclick = function() {
+                    viewer.flyTo(entity, { duration: 3, offset: new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-90), 10000000) });
+                };
+                addedList.appendChild(li);
+                viewer.flyTo(entity, { duration: 3, offset: new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-90), 10000000) });
+            }
+        }
+
+        function zoomIn() {
+            viewer.camera.zoomIn(1000000);
+        }
+
+        function zoomOut() {
+            viewer.camera.zoomOut(1000000);
+        }
+
+        function clearSatellites() {
+            satellites.forEach(sat => viewer.entities.remove(sat));
+            satellites = [];
+            document.getElementById('addedList').innerHTML = '';
+            alert('Satellites cleared!');
+        }
+    </script>
+</body>
+</html>
