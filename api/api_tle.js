@@ -26,57 +26,58 @@ module.exports = (req, res) => {
         return;
     }
 
-    try {
-        console.log('Attempting to login to Space-Track');
-        const loginResponse = await axios.post('https://www.space-track.org/ajaxauth/login', {
-            identity: spaceTrackUsername,
-            password: spaceTrackPassword
-        }, {
-            headers: {
-                'Content-Type': 'application/json',
-                'User-Agent': 'xAI-Grok/1.0'
-            },
-            withCredentials: true,
-            jar: cookieJar,
-            maxRedirects: 0,
-            validateStatus: status => status >= 200 && status < 400
-        });
+    (async () => {
+        try {
+            console.log('Attempting to login to Space-Track');
+            const loginResponse = await axios.post('https://www.space-track.org/ajaxauth/login', {
+                identity: spaceTrackUsername,
+                password: spaceTrackPassword
+            }, {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'User-Agent': 'xAI-Grok/1.0'
+                },
+                withCredentials: true,
+                jar: cookieJar,
+                maxRedirects: 0,
+                validateStatus: status => status >= 200 && status < 400
+            });
 
-        console.log('Login response status:', loginResponse.status);
-        console.log('Login response headers:', JSON.stringify(loginResponse.headers, null, 2));
-        console.log('Saved cookies:', cookieJar.getCookies('https://www.space-track.org'));
+            console.log('Login response status:', loginResponse.status);
+            console.log('Login response headers:', JSON.stringify(loginResponse.headers, null, 2));
 
-        const tleResponse = await axios.get(`https://www.space-track.org/basicspacedata/query/class/tle_latest/NORAD_CAT_ID/${noradId}/orderby/EPOCH%20desc/limit/1/format/json`, {
-            headers: {
-                'Accept': 'application/json',
-                'User-Agent': 'xAI-Grok/1.0'
-            },
-            withCredentials: true,
-            jar: cookieJar
-        });
+            const tleResponse = await axios.get(`https://www.space-track.org/basicspacedata/query/class/tle_latest/NORAD_CAT_ID/${noradId}/orderby/EPOCH%20desc/limit/1/format/json`, {
+                headers: {
+                    'Accept': 'application/json',
+                    'User-Agent': 'xAI-Grok/1.0'
+                },
+                withCredentials: true,
+                jar: cookieJar
+            });
 
-        if (!tleResponse.data || tleResponse.data.length === 0) {
-            throw new Error('No TLE data received from Space-Track');
+            if (!tleResponse.data || tleResponse.data.length === 0) {
+                throw new Error('No TLE data received from Space-Track');
+            }
+
+            const tleData = tleResponse.data[0];
+            const tleLines = [tleData.TLE_LINE1, tleData.TLE_LINE2].filter(line => line && line.trim());
+            if (tleLines.length < 2) {
+                throw new Error('Invalid TLE data: Less than 2 lines received');
+            }
+
+            res.status(200).json({
+                name: tleData.OBJECT_NAME || 'Satellite ' + noradId,
+                tle1: tleLines[0],
+                tle2: tleLines[1]
+            });
+        } catch (error) {
+            console.error('Error fetching TLE:', {
+                message: error.message,
+                response: error.response ? `${error.response.status} ${error.response.statusText}` : 'No response',
+                data: error.response ? error.response.data : 'No data',
+                config: error.config ? error.config.url : 'No config'
+            });
+            res.status(500).json({ error: 'Failed to fetch TLE data: ' + error.message });
         }
-
-        const tleData = tleResponse.data[0];
-        const tleLines = [tleData.TLE_LINE1, tleData.TLE_LINE2].filter(line => line && line.trim());
-        if (tleLines.length < 2) {
-            throw new Error('Invalid TLE data: Less than 2 lines received');
-        }
-
-        res.status(200).json({
-            name: tleData.OBJECT_NAME || 'Satellite ' + noradId,
-            tle1: tleLines[0],
-            tle2: tleLines[1]
-        });
-    } catch (error) {
-        console.error('Error fetching TLE:', {
-            message: error.message,
-            response: error.response ? `${error.response.status} ${error.response.statusText}` : 'No response',
-            data: error.response ? error.response.data : 'No data',
-            config: error.config ? error.config.url : 'No config'
-        });
-        res.status(500).json({ error: 'Failed to fetch TLE data: ' + error.message });
-    }
+    })();
 };
