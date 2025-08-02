@@ -1,14 +1,11 @@
-const { wrapper } = require('axios-cookiejar-support');
+const { default: wrapper } = require('axios-cookiejar-support');
 const axios = wrapper(require('axios').create());
 const tough = require('tough-cookie');
-
 module.exports = (req, res) => {
     const spaceTrackUsername = process.env.SPACE_TRACK_USERNAME || '';
     const spaceTrackPassword = process.env.SPACE_TRACK_PASSWORD || '';
     const cesiumAccessToken = process.env.CESIUM_ACCESS_TOKEN || '';
-
     const cookieJar = new tough.CookieJar();
-
     // Cesiumトークンを返す
     if (req.url === '/api/cesium-token') {
         if (cesiumAccessToken) {
@@ -18,14 +15,12 @@ module.exports = (req, res) => {
         }
         return;
     }
-
     // TLEデータを取得
     const noradId = req.query.norad || '25544';
     if (!spaceTrackUsername || !spaceTrackPassword) {
         res.status(500).json({ error: 'Space-Track credentials are not set' });
         return;
     }
-
     (async () => {
         try {
             console.log('Attempting to login to Space-Track');
@@ -42,11 +37,9 @@ module.exports = (req, res) => {
                 maxRedirects: 0,
                 validateStatus: status => status >= 200 && status < 400
             });
-
             if (loginResponse.status !== 200) {
-                throw new Error('Login failed with status: ' + loginResponse.status);
+                throw new Error(`Login failed with status: ${loginResponse.status}`);
             }
-
             const tleResponse = await axios.get(`https://www.space-track.org/basicspacedata/query/class/tle_latest/NORAD_CAT_ID/${noradId}/orderby/EPOCH%20desc/limit/1/format/json`, {
                 headers: {
                     'Accept': 'application/json',
@@ -55,19 +48,16 @@ module.exports = (req, res) => {
                 withCredentials: true,
                 jar: cookieJar
             });
-
             if (!tleResponse.data || tleResponse.data.length === 0) {
                 throw new Error('No TLE data received from Space-Track');
             }
-
             const tleData = tleResponse.data[0];
             const tleLines = [tleData.TLE_LINE1, tleData.TLE_LINE2].filter(line => line && line.trim());
             if (tleLines.length < 2) {
                 throw new Error('Invalid TLE data: Less than 2 lines received');
             }
-
             res.status(200).json({
-                name: tleData.OBJECT_NAME || 'Satellite ' + noradId,
+                name: tleData.OBJECT_NAME || `Satellite ${noradId}`,
                 tle1: tleLines[0],
                 tle2: tleLines[1]
             });
