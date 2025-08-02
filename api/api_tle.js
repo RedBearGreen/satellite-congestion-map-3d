@@ -43,8 +43,9 @@ module.exports = (req, res) => {
                 validateStatus: status => status >= 200 && status < 400
             });
 
-            console.log('Login response status:', loginResponse.status);
-            console.log('Login response headers:', JSON.stringify(loginResponse.headers, null, 2));
+            if (loginResponse.status !== 200) {
+                throw new Error('Login failed with status: ' + loginResponse.status);
+            }
 
             const tleResponse = await axios.get(`https://www.space-track.org/basicspacedata/query/class/tle_latest/NORAD_CAT_ID/${noradId}/orderby/EPOCH%20desc/limit/1/format/json`, {
                 headers: {
