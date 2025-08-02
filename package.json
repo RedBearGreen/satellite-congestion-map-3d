@@ -2,7 +2,7 @@
   "name": "satellite-congestion-map-3d",
   "version": "1.0.0",
   "dependencies": {
-    "axios": "^0.27.2",  // 古い安定版を指定
+    "axios": "^0.27.2",
     "axios-cookiejar-support": "^1.0.1",
     "tough-cookie": "^4.1.3"
   }
