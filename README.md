@@ -10,4 +10,4 @@ Deployed on Vercel: [Live Demo](https://satellite-congestion-map-3d.vercel.app/)
 **Known Issues**: Cesium token loading may fail occasionally (HTTP 404 error), currently under improvement.
 **Planned**: Mobile optimization in the future.
 
-Your feedback is welcome! Please share your thoughts [here].
+Your feedback is welcome! Please share your thoughts [here](https://github.com/RedBearGreen/satellite-congestion-map-3d/issues/new?labels=Feedback).
