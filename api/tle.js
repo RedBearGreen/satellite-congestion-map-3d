@@ -42,7 +42,7 @@ module.exports = (req, res) => {
             if (loginResponse.status !== 200) {
                 throw new Error(`Login failed with status: ${loginResponse.status}`);
             }
-            const tleResponse = await axios.get(`https://www.space-track.org/basicspacedata/query/class/tle_latest/NORAD_CAT_ID/${noradId}/orderby/EPOCH%20desc/limit/1/format/json`, {
+            const tleResponse = await axios.get(`https://www.space-track.org/basicspacedata/query/class/gp/NORAD_CAT_ID/${noradId}/orderby/EPOCH%20desc/limit/1/format/json`, {
                 headers: {
                     'Accept': 'application/json',
                     'User-Agent': 'xAI-Grok/1.0'
