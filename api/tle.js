@@ -29,17 +29,18 @@ module.exports = async (req, res) => {
         const loginRes = await fetch('https://www.space-track.org/ajaxauth/login', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
+                'Content-Type': 'application/json',
                 'User-Agent': USER_AGENT
             },
-            body: new URLSearchParams({ identity: username, password }),
+            // 元のaxios版と同じJSON形式でログイン
+            body: JSON.stringify({ identity: username, password }),
             redirect: 'manual'
         });
         if (loginRes.status !== 200) {
             throw new Error(`Login failed with status: ${loginRes.status}`);
         }
         const loginBody = await loginRes.text();
-        if (loginBody.includes('"Login":"Failed"')) {
+        if (/fail/i.test(loginBody)) {
             throw new Error('Login failed: check Space-Track credentials');
         }
 
@@ -51,19 +52,32 @@ module.exports = async (req, res) => {
             throw new Error('No session cookie returned from Space-Track');
         }
 
-        // 3. TLEを取得
-        const tleUrl = `https://www.space-track.org/basicspacedata/query/class/tle_latest/NORAD_CAT_ID/${noradId}/orderby/EPOCH%20desc/limit/1/format/json`;
-        const tleRes = await fetch(tleUrl, {
-            headers: {
-                'Accept': 'application/json',
-                'User-Agent': USER_AGENT,
-                'Cookie': cookie
+        // 3. TLEを取得(推奨のgpクラスを先に試し、ダメなら旧tle_latestクラスで再挑戦)
+        const base = 'https://www.space-track.org/basicspacedata/query/class';
+        const urls = [
+            `${base}/gp/NORAD_CAT_ID/${noradId}/orderby/EPOCH%20desc/limit/1/format/json`,
+            `${base}/tle_latest/NORAD_CAT_ID/${noradId}/orderby/EPOCH%20desc/limit/1/format/json`
+        ];
+        let data = null;
+        const failures = [];
+        for (const url of urls) {
+            const tleRes = await fetch(url, {
+                headers: {
+                    'Accept': 'application/json',
+                    'User-Agent': USER_AGENT,
+                    'Cookie': cookie
+                }
+            });
+            if (tleRes.ok) {
+                data = await tleRes.json();
+                break;
             }
-        });
-        if (!tleRes.ok) {
-            throw new Error(`TLE request failed with status: ${tleRes.status}`);
+            const snippet = (await tleRes.text()).slice(0, 120).replace(/\s+/g, ' ');
+            failures.push(`${url.includes('/gp/') ? 'gp' : 'tle_latest'} ${tleRes.status} ${snippet}`);
         }
-        const data = await tleRes.json();
+        if (!data) {
+            throw new Error(`TLE request failed: ${failures.join(' | ')}`);
+        }
         if (!Array.isArray(data) || data.length === 0) {
             throw new Error('No TLE data received from Space-Track');
         }
